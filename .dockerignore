@@ -1,0 +1,28 @@
+# Git
+.git
+.gitignore
+
+# Environment
+.env
+
+# Python cache
+__pycache__
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv
+venv
+
+# IDE
+.idea
+.vscode
+
+# Tests cache
+.pytest_cache
+
+# Ruff cache
+.ruff_cache
+
+# OS
+.DS_Store

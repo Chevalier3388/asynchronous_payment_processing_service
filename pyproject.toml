@@ -1,0 +1,41 @@
+[project]
+name = "asynchronous-payment-processing-service"
+version = "0.1.0"
+description = "Asynchronous payment processing service"
+readme = "README.md"
+requires-python = ">=3.14"
+
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2.0",
+    "pydantic-settings",
+    "sqlalchemy[asyncio]",
+    "asyncpg",
+    "alembic",
+    "faststream[rabbit]",
+    "httpx",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+]
+
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+]
+
+
+[tool.ruff.format]
+quote-style = "double"
