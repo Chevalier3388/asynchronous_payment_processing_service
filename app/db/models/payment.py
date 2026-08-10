@@ -42,7 +42,8 @@ class Payment(Base):
         Text,
         nullable=False,
     )
-    metadata: Mapped[dict] = mapped_column(
+    payment_metadata: Mapped[dict] = mapped_column(
+        "metadata",
         JSONB,
         nullable=False,
     )

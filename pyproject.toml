@@ -3,7 +3,7 @@ name = "asynchronous-payment-processing-service"
 version = "0.1.0"
 description = "Asynchronous payment processing service"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.14,<4.0"
 
 dependencies = [
     "fastapi",
@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings",
     "sqlalchemy[asyncio]",
     "asyncpg",
+    "psycopg[binary]",
     "alembic",
     "faststream[rabbit]",
     "httpx",
