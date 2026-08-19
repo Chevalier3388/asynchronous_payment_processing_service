@@ -1,3 +1,6 @@
+from datetime import UTC, datetime
+from uuid import UUID
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,3 +26,12 @@ class OutboxRepository:
         )
 
         return list(result.scalars().all())
+
+    async def mark_as_published(
+        self,
+        outbox_id: UUID,
+    ) -> None:
+        outbox = await self.session.get(Outbox, outbox_id)
+
+        if outbox is not None:
+            outbox.published_at = datetime.now(UTC)

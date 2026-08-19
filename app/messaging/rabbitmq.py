@@ -1,5 +1,5 @@
 import aio_pika
-from aio_pika import Channel, Connection
+from aio_pika import Channel, Connection, Message
 
 from app.core.config import settings
 
@@ -18,3 +18,16 @@ class RabbitMQ:
     async def close(self) -> None:
         if self.connection is not None:
             await self.connection.close()
+
+    async def publish(
+        self,
+        message: Message,
+        routing_key: str,
+    ) -> None:
+        if self.channel is None:
+            raise RuntimeError("RabbitMQ is not connected")
+
+        await self.channel.default_exchange.publish(
+            message,
+            routing_key=routing_key,
+        )
