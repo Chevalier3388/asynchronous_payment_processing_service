@@ -1,5 +1,5 @@
-from app.repositories.outbox import OutboxRepository
-from app.repositories.payment import PaymentRepository
+from app.repositories.outbox_repository import OutboxRepository
+from app.repositories.payment_repository import PaymentRepository
 
 __all__ = [
     "OutboxRepository",

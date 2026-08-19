@@ -16,6 +16,7 @@ dependencies = [
     "alembic",
     "faststream[rabbit]",
     "httpx",
+    "aio-pika (>=10.0.1,<11.0.0)",
 ]
 
 [dependency-groups]
