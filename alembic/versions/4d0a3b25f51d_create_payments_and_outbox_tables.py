@@ -5,17 +5,18 @@ Revises:
 Create Date: 2026-08-10 22:47:31.209898
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
+from alembic import op
+
 # revision identifiers, used by Alembic.
 revision: str = '4d0a3b25f51d'
-down_revision: Union[str, Sequence[str], None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -24,21 +25,48 @@ def upgrade() -> None:
     op.create_table('outbox',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('event_type', sa.String(), nullable=False),
-    sa.Column('payload', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column(
+        'payload',
+        postgresql.JSONB(astext_type=sa.Text()),
+        nullable=False
+    ),
+    sa.Column(
+        'created_at',
+        sa.DateTime(timezone=True),
+        server_default=sa.text('now()'),
+        nullable=False
+    ),
     sa.Column('published_at', sa.DateTime(timezone=True), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_table('payments',
-    sa.Column('id', sa.UUID(), nullable=False),
+    op.create_table(
+        'payments',
+        sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('amount', sa.Numeric(precision=12, scale=2), nullable=False),
-    sa.Column('currency', sa.Enum('RUB', 'USD', 'EUR', name='paymentcurrency'), nullable=False),
+    sa.Column(
+        'currency',
+        sa.Enum('RUB', 'USD', 'EUR', name='paymentcurrency'),
+        nullable=False
+    ),
     sa.Column('description', sa.Text(), nullable=False),
-    sa.Column('metadata', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-    sa.Column('status', sa.Enum('PENDING', 'SUCCEEDED', 'FAILED', name='paymentstatus'), nullable=False),
+    sa.Column(
+        'metadata',
+        postgresql.JSONB(astext_type=sa.Text()),
+        nullable=False
+    ),
+    sa.Column(
+        'status',
+        sa.Enum('PENDING', 'SUCCEEDED', 'FAILED', name='paymentstatus'),
+        nullable=False
+    ),
     sa.Column('idempotency_key', sa.String(), nullable=False),
     sa.Column('webhook_url', sa.String(), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column(
+        'created_at',
+        sa.DateTime(timezone=True),
+        server_default=sa.text('now()'),
+        nullable=False
+    ),
     sa.Column('processed_at', sa.DateTime(timezone=True), nullable=True),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('idempotency_key')
