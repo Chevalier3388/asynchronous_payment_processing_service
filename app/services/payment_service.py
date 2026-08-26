@@ -37,7 +37,7 @@ class PaymentService:
         await self.payment_repository.create(payment)
 
         outbox = Outbox(
-            event_type="payment.created",
+            event_type="payments.new",
             payload={
                 "payment_id": str(payment.id),
             },

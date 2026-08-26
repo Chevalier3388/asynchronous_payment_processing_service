@@ -14,7 +14,7 @@ dependencies = [
     "asyncpg",
     "psycopg[binary]",
     "alembic",
-    "faststream[rabbit]",
+    "faststream[cli] (>=0.7.4,<0.8.0)",
     "httpx",
     "aio-pika (>=10.0.1,<11.0.0)",
 ]

@@ -4,6 +4,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.payment import Payment
+from datetime import datetime
+
+from app.db.models.payment import PaymentStatus
 
 
 class PaymentRepository:
@@ -34,3 +37,15 @@ class PaymentRepository:
         )
 
         return result.scalar_one_or_none()
+
+    async def update_status(
+            self,
+            payment: Payment,
+            status: PaymentStatus,
+    ) -> Payment:
+        payment.status = status
+        payment.processed_at = datetime.now()
+
+        await self.session.flush()
+
+        return payment
