@@ -2,6 +2,7 @@ import asyncio
 import json
 import random
 
+import httpx
 from faststream.rabbit import RabbitMessage
 
 from app.db.database import async_session_maker
@@ -34,6 +35,17 @@ async def process_payment(message: RabbitMessage) -> None:
                 status = PaymentStatus.FAILED
 
             await repository.update_status(payment, status)
+
         await session.commit()
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                str(payment.webhook_url),
+                json={
+                    "payment_id": str(payment.id),
+                    "status": payment.status.value,
+                },
+            )
+            response.raise_for_status()
 
         print(f"Payment {payment.id}: {payment.status}")
