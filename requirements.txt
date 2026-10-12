@@ -14,3 +14,4 @@ aio-pika==10.0.1
 
 # Development tools
 ruff==0.16.2
+pytest==9.1.1
