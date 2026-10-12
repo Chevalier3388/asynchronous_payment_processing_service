@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_async_session
 from app.repositories.outbox_repository import OutboxRepository
 from app.repositories.payment_repository import PaymentRepository
-from app.schemas.payment import PaymentCreate, PaymentResponse
+from app.schemas.payment import PaymentCreate, PaymentCreatedResponse
 from app.services.payment_service import PaymentService
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -24,12 +24,17 @@ def get_payment_service(
 
 @router.post(
     "",
-    response_model=PaymentResponse,
+    response_model=PaymentCreatedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_payment(
     payment_data: PaymentCreate,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
     service: PaymentService = Depends(get_payment_service),
-) -> PaymentResponse:
-    payment = await service.create_payment(payment_data)
+) -> PaymentCreatedResponse:
+    payment = await service.create_payment(
+        payment_data,
+        idempotency_key=idempotency_key,
+    )
 
-    return PaymentResponse.model_validate(payment)
+    return PaymentCreatedResponse.model_validate(payment)

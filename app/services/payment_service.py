@@ -17,9 +17,10 @@ class PaymentService:
     async def create_payment(
         self,
         payment_data: PaymentCreate,
+        idempotency_key: str,
     ) -> Payment:
         existing_payment = await self.payment_repository.get_by_idempotency_key(
-            payment_data.idempotency_key,
+            idempotency_key,
         )
 
         if existing_payment is not None:
@@ -30,7 +31,7 @@ class PaymentService:
             currency=payment_data.currency,
             description=payment_data.description,
             payment_metadata=payment_data.metadata,
-            idempotency_key=payment_data.idempotency_key,
+            idempotency_key=idempotency_key,
             webhook_url=str(payment_data.webhook_url),
         )
 

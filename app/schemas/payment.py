@@ -12,7 +12,6 @@ class PaymentCreate(BaseModel):
     currency: PaymentCurrency
     description: str
     metadata: dict
-    idempotency_key: str
     webhook_url: HttpUrl
 
 
@@ -27,5 +26,12 @@ class PaymentResponse(BaseModel):
     webhook_url: HttpUrl
     created_at: datetime
     processed_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+class PaymentCreatedResponse(BaseModel):
+    payment_id: UUID = Field(validation_alias="id")
+    status: PaymentStatus
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
