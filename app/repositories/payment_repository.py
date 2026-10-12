@@ -66,3 +66,11 @@ class PaymentRepository:
 
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
+
+    async def get_by_id_for_update(self, payment_id: UUID) -> Payment | None:
+        result = await self.session.execute(
+            select(Payment)
+            .where(Payment.id == payment_id)
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()

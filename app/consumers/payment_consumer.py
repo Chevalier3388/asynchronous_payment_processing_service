@@ -17,22 +17,23 @@ async def process_payment(message: RabbitMessage) -> None:
 
     async with async_session_maker() as session:
         repository = PaymentRepository(session)
-        payment = await repository.get_by_id(payment_id)
+        payment = await repository.get_by_id_for_update(payment_id)
 
         if payment is None:
             print(f"Payment {payment_id} not found")
             return
 
-        print(f"Processing payment: {payment.id}")
+        if payment.status == PaymentStatus.PENDING:
+            print(f"Processing payment: {payment.id}")
 
-        await asyncio.sleep(random.uniform(2, 5))
+            await asyncio.sleep(random.uniform(2, 5))
 
-        if random.random() < 0.9:
-            status = PaymentStatus.SUCCEEDED
-        else:
-            status = PaymentStatus.FAILED
+            if random.random() < 0.9:
+                status = PaymentStatus.SUCCEEDED
+            else:
+                status = PaymentStatus.FAILED
 
-        await repository.update_status(payment, status)
+            await repository.update_status(payment, status)
         await session.commit()
 
-        print(f"Payment {payment.id}: {status}")
+        print(f"Payment {payment.id}: {payment.status}")

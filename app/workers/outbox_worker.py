@@ -6,7 +6,6 @@ from app.db.database import async_session_maker
 from app.messaging.rabbitmq import RabbitMQ
 from app.workers.outbox_publisher import OutboxPublisher
 
-
 logger = logging.getLogger(__name__)
 
 
