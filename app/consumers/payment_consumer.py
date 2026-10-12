@@ -3,6 +3,7 @@ import json
 import random
 
 import httpx
+from faststream.exceptions import RejectMessage
 from faststream.rabbit import RabbitMessage
 
 from app.db.database import async_session_maker
@@ -52,7 +53,7 @@ async def process_payment(message: RabbitMessage) -> None:
                     break
                 except httpx.HTTPError:
                     if attempt == 2:
-                        raise
+                        raise RejectMessage(requeue=False) from None
 
                     await asyncio.sleep(2**attempt)
 

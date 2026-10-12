@@ -3,6 +3,7 @@ from aio_pika import Channel, Connection, Message
 from pamqp.commands import Basic
 
 from app.core.config import settings
+from app.messaging.broker import payments_dlq, payments_queue
 
 
 class RabbitMQ:
@@ -19,8 +20,13 @@ class RabbitMQ:
             on_return_raises=True,
         )
         await self.channel.declare_queue(
-            "payments.new",
+            payments_dlq.name,
             durable=True,
+        )
+        await self.channel.declare_queue(
+            payments_queue.name,
+            durable=True,
+            arguments=payments_queue.arguments,
         )
 
     async def close(self) -> None:
