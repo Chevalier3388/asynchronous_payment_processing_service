@@ -206,4 +206,10 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Local environment overrides and settings
+.env.*
+!.env.example
+.aws/
+.agents/
+.codex/
 docs
