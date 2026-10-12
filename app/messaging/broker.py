@@ -4,4 +4,4 @@ from app.core.config import settings
 
 broker = RabbitBroker(settings.rabbitmq_url)
 
-payments_queue = RabbitQueue("payments.new")
+payments_queue = RabbitQueue("payments.new", durable=True)

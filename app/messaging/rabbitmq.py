@@ -1,5 +1,6 @@
 import aio_pika
 from aio_pika import Channel, Connection, Message
+from pamqp.commands import Basic
 
 from app.core.config import settings
 
@@ -13,7 +14,14 @@ class RabbitMQ:
         self.connection = await aio_pika.connect_robust(
             settings.rabbitmq_url,
         )
-        self.channel = await self.connection.channel()
+        self.channel = await self.connection.channel(
+            publisher_confirms=True,
+            on_return_raises=True,
+        )
+        await self.channel.declare_queue(
+            "payments.new",
+            durable=True,
+        )
 
     async def close(self) -> None:
         if self.connection is not None:
@@ -27,7 +35,12 @@ class RabbitMQ:
         if self.channel is None:
             raise RuntimeError("RabbitMQ is not connected")
 
-        await self.channel.default_exchange.publish(
+        confirmation = await self.channel.default_exchange.publish(
             message,
             routing_key=routing_key,
+            mandatory=True,
+            timeout=10,
         )
+
+        if not isinstance(confirmation, Basic.Ack):
+            raise RuntimeError("RabbitMQ did not confirm publication")

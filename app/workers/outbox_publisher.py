@@ -1,6 +1,6 @@
 import json
 
-from aio_pika import Message
+from aio_pika import DeliveryMode, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -26,6 +26,7 @@ class OutboxPublisher:
             message = Message(
                 body=json.dumps(event.payload).encode(),
                 content_type="application/json",
+                delivery_mode=DeliveryMode.PERSISTENT,
             )
 
             await self.rabbitmq.publish(
