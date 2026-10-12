@@ -37,7 +37,18 @@ class PaymentService:
             webhook_url=str(payment_data.webhook_url),
         )
 
-        await self.payment_repository.create(payment)
+        created_payment = await self.payment_repository.create_if_absent(payment)
+
+        if created_payment is None:
+            existing_payment = await self.payment_repository.get_by_idempotency_key(
+                idempotency_key,
+            )
+            if existing_payment is None:
+                raise RuntimeError("Payment not found after idempotency conflict")
+
+            return existing_payment
+
+        payment = created_payment
 
         outbox = Outbox(
             event_type="payments.new",
