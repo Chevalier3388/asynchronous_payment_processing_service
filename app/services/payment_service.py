@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from app.db.models.outbox import Outbox
 from app.db.models.payment import Payment
 from app.repositories.outbox_repository import OutboxRepository
@@ -47,3 +49,6 @@ class PaymentService:
         await self.outbox_repository.create(outbox)
 
         return payment
+
+    async def get_payment(self, payment_id: UUID) -> Payment | None:
+        return await self.payment_repository.get_by_id(payment_id)

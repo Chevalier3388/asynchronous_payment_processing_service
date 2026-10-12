@@ -1,10 +1,16 @@
-from fastapi import APIRouter, Depends, Header, status
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_async_session
 from app.repositories.outbox_repository import OutboxRepository
 from app.repositories.payment_repository import PaymentRepository
-from app.schemas.payment import PaymentCreate, PaymentCreatedResponse
+from app.schemas.payment import (
+    PaymentCreate,
+    PaymentCreatedResponse,
+    PaymentResponse,
+)
 from app.services.payment_service import PaymentService
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -38,3 +44,22 @@ async def create_payment(
     )
 
     return PaymentCreatedResponse.model_validate(payment)
+
+
+@router.get(
+    "/{payment_id}",
+    response_model=PaymentResponse,
+)
+async def get_payment(
+    payment_id: UUID,
+    service: PaymentService = Depends(get_payment_service),
+) -> PaymentResponse:
+    payment = await service.get_payment(payment_id)
+
+    if payment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Payment not found",
+        )
+
+    return PaymentResponse.model_validate(payment)
