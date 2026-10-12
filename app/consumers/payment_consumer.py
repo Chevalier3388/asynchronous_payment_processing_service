@@ -39,13 +39,21 @@ async def process_payment(message: RabbitMessage) -> None:
         await session.commit()
 
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                str(payment.webhook_url),
-                json={
-                    "payment_id": str(payment.id),
-                    "status": payment.status.value,
-                },
-            )
-            response.raise_for_status()
+            for attempt in range(3):
+                try:
+                    response = await client.post(
+                        str(payment.webhook_url),
+                        json={
+                            "payment_id": str(payment.id),
+                            "status": payment.status.value,
+                        },
+                    )
+                    response.raise_for_status()
+                    break
+                except httpx.HTTPError:
+                    if attempt == 2:
+                        raise
+
+                    await asyncio.sleep(2**attempt)
 
         print(f"Payment {payment.id}: {payment.status}")
