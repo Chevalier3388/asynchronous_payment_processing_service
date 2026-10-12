@@ -4,6 +4,15 @@
 
 # Environment
 .env
+.env.*
+!.env.example
+.envrc
+.aws
+.pypirc
+
+# Local agent settings
+.agents
+.codex
 
 # Python cache
 __pycache__
@@ -13,16 +22,42 @@ __pycache__
 # Virtual environments
 .venv
 venv
+env
+ENV
+env.bak
+venv.bak
 
 # IDE
 .idea
+.idea_backup
 .vscode
+*.swp
+*.swo
+*~
 
 # Tests cache
 .pytest_cache
+.mypy_cache
+.hypothesis
+.tox
+.nox
+.coverage
+.coverage.*
+coverage.xml
+htmlcov
 
 # Ruff cache
 .ruff_cache
 
+# Build artifacts
+build
+dist
+*.egg-info
+*.egg
+
+# Local logs
+*.log
+
 # OS
 .DS_Store
+Thumbs.db
