@@ -29,6 +29,7 @@ class PaymentResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
 class PaymentCreatedResponse(BaseModel):
     payment_id: UUID = Field(validation_alias="id")
     status: PaymentStatus

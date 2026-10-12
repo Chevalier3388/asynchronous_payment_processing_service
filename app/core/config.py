@@ -30,7 +30,6 @@ class Settings(BaseSettings):
     outbox_poll_interval: float = 0.5
     outbox_batch_size: int = 100
 
-
     @property
     def database_url(self) -> str:
         """Возвращает строку подключения к PostgreSQL."""

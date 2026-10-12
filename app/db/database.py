@@ -12,6 +12,7 @@ from app.core.config import settings
 
 class Base(DeclarativeBase):
     """Базовый класс для SQLAlchemy моделей приложения."""
+
     pass
 
 

@@ -14,11 +14,7 @@ from app.schemas.payment import (
 )
 from app.services.payment_service import PaymentService
 
-router = APIRouter(
-    prefix="/payments",
-    tags=["payments"],
-    dependencies=[Depends(verify_api_key)]
-)
+router = APIRouter(prefix="/payments", tags=["payments"], dependencies=[Depends(verify_api_key)])
 
 
 def get_payment_service(
