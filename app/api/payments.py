@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import verify_api_key
 from app.db.database import get_async_session
 from app.repositories.outbox_repository import OutboxRepository
 from app.repositories.payment_repository import PaymentRepository
@@ -13,7 +14,11 @@ from app.schemas.payment import (
 )
 from app.services.payment_service import PaymentService
 
-router = APIRouter(prefix="/payments", tags=["payments"])
+router = APIRouter(
+    prefix="/payments",
+    tags=["payments"],
+    dependencies=[Depends(verify_api_key)]
+)
 
 
 def get_payment_service(
