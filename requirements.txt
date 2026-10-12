@@ -1,0 +1,16 @@
+# Python 3.14
+# Application dependencies
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+pydantic==2.13.4
+pydantic-settings==2.15.0
+sqlalchemy[asyncio]==2.0.51
+asyncpg==0.31.0
+psycopg[binary]==3.3.4
+alembic==1.19.1
+faststream[cli]==0.7.4
+httpx==0.28.1
+aio-pika==10.0.1
+
+# Development tools
+ruff==0.16.2
