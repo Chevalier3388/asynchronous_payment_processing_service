@@ -32,7 +32,7 @@ python -m ruff format --check .
 
 ## Тесты
 
-Набор содержит **27 проверок** на pytest: 14 для API и 13 для обработки платежей
+Набор содержит **29 проверок** на pytest: 16 для API и транзакций и 13 для обработки платежей
 и публикации событий. Несколько сценариев запускаются одной параметризованной функцией.
 Docker, работающие PostgreSQL и RabbitMQ для запуска не нужны.
 
@@ -78,6 +78,9 @@ python -m pytest -v tests/test_payment_processing.py::test_completed_payment_web
 | `test_publication_requires_broker_ack` | Ответы Ack и Nack от брокера | Ack принимается; Nack вызывает ошибку; публикация использует mandatory и тайм-аут | 2 |
 
 ### Как устроены проверки
+
+`tests/test_payment_transaction.py` проверяет успешный commit перед ответом 202
+и ответ 500 с rollback при ошибке commit, используя подменённую сессию БД.
 
 `tests/conftest.py` задаёт тестовую конфигурацию и общие фикстуры. В API-тестах
 сервис подменяется через FastAPI `dependency_overrides`. В тестах обработки

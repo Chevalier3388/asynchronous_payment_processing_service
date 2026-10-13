@@ -18,7 +18,7 @@ router = APIRouter(prefix="/payments", tags=["payments"], dependencies=[Depends(
 
 
 def get_payment_service(
-    session: AsyncSession = Depends(get_async_session),
+    session: AsyncSession = Depends(get_async_session, scope="function"),
 ) -> PaymentService:
     payment_repository = PaymentRepository(session)
     outbox_repository = OutboxRepository(session)
