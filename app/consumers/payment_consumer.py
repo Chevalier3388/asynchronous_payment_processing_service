@@ -1,4 +1,5 @@
 import json
+import logging
 from uuid import UUID
 
 from faststream.exceptions import RejectMessage
@@ -22,6 +23,7 @@ from app.services.errors import (
 
 MAX_RETRIES = 2
 RETRY_HEADER = "x-payment-retry-count"
+logger = logging.getLogger(__name__)
 
 
 @broker.subscriber(payments_queue)
@@ -33,14 +35,21 @@ async def process_payment(message: RabbitMessage) -> None:
         if retry_count < 0 or retry_count > MAX_RETRIES:
             raise ValueError("Invalid payment retry count")
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
-        print(f"Rejecting malformed payment message: {error}")
+        logger.warning(
+            "Rejecting malformed payment message: error_type=%s",
+            type(error).__name__,
+        )
         raise RejectMessage(requeue=False) from error
 
     try:
         async with payment_processing_service() as service:
             payment = await service.process(payment_id)
     except (PaymentNotFoundError, PermanentWebhookDeliveryError) as error:
-        print(f"Rejecting payment {payment_id}: {error}")
+        logger.warning(
+            "Rejecting payment: payment_id=%s error_type=%s",
+            payment_id,
+            type(error).__name__,
+        )
         raise RejectMessage(requeue=False) from error
     except (
         PaymentGatewayError,
@@ -51,7 +60,11 @@ async def process_payment(message: RabbitMessage) -> None:
         OSError,
     ) as error:
         if retry_count >= MAX_RETRIES:
-            print(f"Retry limit reached for payment {payment_id}: {error}")
+            logger.error(
+                "Retry limit reached: payment_id=%s error_type=%s",
+                payment_id,
+                type(error).__name__,
+            )
             raise RejectMessage(requeue=False) from error
 
         retry_queue = payments_retry_1s if retry_count == 0 else payments_retry_2s
@@ -64,10 +77,19 @@ async def process_payment(message: RabbitMessage) -> None:
         )
         if not isinstance(confirmation, Basic.Ack):
             raise RuntimeError("RabbitMQ did not confirm the retry message") from error
-        print(f"Scheduled retry {retry_count + 1} for payment {payment_id}: {error}")
+        logger.warning(
+            "Scheduled payment retry: payment_id=%s retry_count=%s error_type=%s",
+            payment_id,
+            retry_count + 1,
+            type(error).__name__,
+        )
         return
     except Exception as error:
-        print(f"Rejecting unexpected processing error for payment {payment_id}: {error}")
+        logger.error(
+            "Rejecting unexpected processing error: payment_id=%s error_type=%s",
+            payment_id,
+            type(error).__name__,
+        )
         raise RejectMessage(requeue=False) from error
 
-    print(f"Payment {payment.id}: {payment.status}")
+    logger.info("Payment processed: payment_id=%s status=%s", payment.id, payment.status)
