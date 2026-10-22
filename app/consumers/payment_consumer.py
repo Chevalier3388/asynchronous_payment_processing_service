@@ -1,61 +1,26 @@
-import asyncio
 import json
-import random
+from uuid import UUID
 
-import httpx
 from faststream.exceptions import RejectMessage
 from faststream.rabbit import RabbitMessage
 
-from app.db.database import async_session_maker
-from app.domain.payment import PaymentStatus
+from app.consumers.dependencies import payment_processing_service
 from app.messaging.broker import broker, payments_queue
-from app.repositories.payment_repository import PaymentRepository
-from app.schemas.webhook import PaymentWebhookPayload
+from app.services.errors import PaymentNotFoundError, WebhookDeliveryExhaustedError
 
 
 @broker.subscriber(payments_queue)
 async def process_payment(message: RabbitMessage) -> None:
     data = json.loads(message.body)
-    payment_id = data["payment_id"]
+    payment_id = UUID(data["payment_id"])
 
-    async with async_session_maker() as session:
-        repository = PaymentRepository(session)
-        payment = await repository.get_by_id_for_update(payment_id)
+    try:
+        async with payment_processing_service() as service:
+            payment = await service.process(payment_id)
+    except PaymentNotFoundError as error:
+        print(error)
+        return
+    except WebhookDeliveryExhaustedError:
+        raise RejectMessage(requeue=False) from None
 
-        if payment is None:
-            print(f"Payment {payment_id} not found")
-            return
-
-        if not payment.is_completed:
-            print(f"Processing payment: {payment.id}")
-
-            await asyncio.sleep(random.uniform(2, 5))
-
-            if random.random() < 0.9:
-                status = PaymentStatus.SUCCEEDED
-            else:
-                status = PaymentStatus.FAILED
-
-            payment = payment.complete(status)
-            payment = await repository.save(payment)
-
-        await session.commit()
-
-        payload = PaymentWebhookPayload.model_validate(payment).model_dump(mode="json")
-
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            for attempt in range(3):
-                try:
-                    response = await client.post(
-                        str(payment.webhook_url),
-                        json=payload,
-                    )
-                    response.raise_for_status()
-                    break
-                except httpx.HTTPError:
-                    if attempt == 2:
-                        raise RejectMessage(requeue=False) from None
-
-                    await asyncio.sleep(2**attempt)
-
-        print(f"Payment {payment.id}: {payment.status}")
+    print(f"Payment {payment.id}: {payment.status}")

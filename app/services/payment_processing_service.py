@@ -1,0 +1,51 @@
+import asyncio
+from collections.abc import Awaitable, Callable
+from uuid import UUID
+
+from app.domain.payment import Payment
+from app.services.errors import (
+    PaymentNotFoundError,
+    WebhookDeliveryError,
+    WebhookDeliveryExhaustedError,
+)
+from app.services.ports import PaymentGateway, PaymentProcessingRepository, WebhookSender
+
+
+class PaymentProcessingService:
+    def __init__(
+        self,
+        repository: PaymentProcessingRepository,
+        gateway: PaymentGateway,
+        webhook_sender: WebhookSender,
+        commit: Callable[[], Awaitable[None]],
+    ) -> None:
+        self.repository = repository
+        self.gateway = gateway
+        self.webhook_sender = webhook_sender
+        self.commit = commit
+
+    async def process(self, payment_id: UUID) -> Payment:
+        payment = await self.repository.get_by_id_for_update(payment_id)
+        if payment is None:
+            raise PaymentNotFoundError(f"Payment {payment_id} not found")
+
+        if not payment.is_completed:
+            status = await self.gateway.process(payment)
+            payment = await self.repository.save(payment.complete(status))
+
+        # Освобождаем блокировку и фиксируем результат до внешнего HTTP-запроса.
+        await self.commit()
+        await self._notify(payment)
+        return payment
+
+    async def _notify(self, payment: Payment) -> None:
+        for attempt in range(3):
+            try:
+                await self.webhook_sender.send(payment)
+                return
+            except WebhookDeliveryError as error:
+                if attempt == 2:
+                    raise WebhookDeliveryExhaustedError(
+                        f"Webhook delivery failed after 3 attempts for payment {payment.id}"
+                    ) from error
+                await asyncio.sleep(2**attempt)
