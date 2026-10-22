@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
-from app.db.models.payment import PaymentCurrency, PaymentStatus
+from app.domain.payment import PaymentCurrency, PaymentStatus
 
 
 class PaymentWebhookPayload(BaseModel):

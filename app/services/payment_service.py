@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from app.db.models.outbox import Outbox
-from app.db.models.payment import Payment
+from app.domain.payment import Payment
 from app.repositories.outbox_repository import OutboxRepository
 from app.repositories.payment_repository import PaymentRepository
 from app.schemas.payment import PaymentCreate
@@ -32,7 +32,7 @@ class PaymentService:
             amount=payment_data.amount,
             currency=payment_data.currency,
             description=payment_data.description,
-            payment_metadata=payment_data.metadata,
+            metadata=payment_data.metadata,
             idempotency_key=idempotency_key,
             webhook_url=str(payment_data.webhook_url),
         )

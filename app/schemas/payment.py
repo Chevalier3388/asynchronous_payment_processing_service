@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
-from app.db.models.payment import PaymentCurrency, PaymentStatus
+from app.domain.payment import PaymentCurrency, PaymentStatus
 
 
 class PaymentCreate(BaseModel):
@@ -20,7 +20,7 @@ class PaymentResponse(BaseModel):
     amount: Decimal
     currency: PaymentCurrency
     description: str
-    metadata: dict = Field(validation_alias="payment_metadata")
+    metadata: dict
     status: PaymentStatus
     idempotency_key: str
     webhook_url: HttpUrl

@@ -7,7 +7,7 @@ from faststream.exceptions import RejectMessage
 from faststream.rabbit import RabbitMessage
 
 from app.db.database import async_session_maker
-from app.db.models.payment import PaymentStatus
+from app.domain.payment import PaymentStatus
 from app.messaging.broker import broker, payments_queue
 from app.repositories.payment_repository import PaymentRepository
 from app.schemas.webhook import PaymentWebhookPayload
@@ -26,7 +26,7 @@ async def process_payment(message: RabbitMessage) -> None:
             print(f"Payment {payment_id} not found")
             return
 
-        if payment.status == PaymentStatus.PENDING:
+        if not payment.is_completed:
             print(f"Processing payment: {payment.id}")
 
             await asyncio.sleep(random.uniform(2, 5))
@@ -36,7 +36,8 @@ async def process_payment(message: RabbitMessage) -> None:
             else:
                 status = PaymentStatus.FAILED
 
-            await repository.update_status(payment, status)
+            payment = payment.complete(status)
+            payment = await repository.save(payment)
 
         await session.commit()
 
