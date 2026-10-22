@@ -23,6 +23,7 @@ class OutboxRepository:
             .where(Outbox.published_at.is_(None))
             .order_by(Outbox.created_at)
             .limit(limit)
+            .with_for_update(skip_locked=True)
         )
 
         return list(result.scalars().all())
