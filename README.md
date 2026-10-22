@@ -19,7 +19,7 @@ API принимает платёж и возвращает `202 Accepted`, а �
 | Обработка | Один FastStream consumer: эмуляция → сохранение → webhook → retry |
 | Ошибки webhook | До трёх отправок; паузы 1 и 2 секунды; затем `payments.dlq` |
 | Запуск | Docker Compose или локальные Python-процессы с инфраструктурой в Docker |
-| Автотесты | 29 сценариев pytest без подключения к реальным БД, RabbitMQ и webhook |
+| Автотесты | 35 сценариев pytest без подключения к реальным БД, RabbitMQ и webhook |
 
 ## Содержание
 
@@ -56,7 +56,7 @@ API принимает платёж и возвращает `202 Accepted`, а �
 | Подготовка | Проверяет Docker и Compose; создаёт `.env` из примера, только если файла ещё нет |
 | 1. Сборка | Один раз собирает общий образ Python-сервисов |
 | 2. Запуск | Запускает PostgreSQL, RabbitMQ, миграции, API, consumer и publisher |
-| 3. Качество кода | Запускает Ruff и 29 автотестов в отдельном временном контейнере |
+| 3. Качество кода | Запускает Ruff и 35 автотестов в отдельном временном контейнере |
 | 4. Интеграция | Проверяет API-ключ, полный путь платежа, повторный ключ, 20 конкурентных POST, успех webhook на второй/третьей попытке, HTTP 500, тайм-аут, недоступный получатель и DLQ |
 | 5. Сбой брокера | Временно останавливает RabbitMQ, создаёт платёж и проверяет неопубликованную запись Outbox |
 | 6. Восстановление | Запускает RabbitMQ, ждёт автоматической публикации и webhook |
@@ -466,14 +466,30 @@ curl -i "$PAYMENT_BASE_URL/api/v1/payments/$PAYMENT_ID" \
 ### Контракт уведомления
 
 Consumer отправляет HTTP POST на сохранённый `webhook_url` после commit результата.
-Тело содержит два поля:
+Тело формируется по схеме [PaymentWebhookPayload](app/schemas/webhook.py) и содержит пять полей:
 
 ```json
 {
   "payment_id": "c62240ce-f4c5-4c74-b993-c9d6810355e4",
-  "status": "succeeded"
+  "status": "succeeded",
+  "amount": "100.00",
+  "currency": "RUB",
+  "processed_at": "2026-10-13T14:20:26.688063Z"
 }
 ```
+
+| Поле | Формат | Значение |
+| --- | --- | --- |
+| `payment_id` | UUID в строке | Идентификатор платежа |
+| `status` | `succeeded` или `failed` | Сохранённый результат шлюза; `pending` недопустим |
+| `amount` | Строка Decimal | Сумма платежа без преобразования в float |
+| `currency` | `RUB`, `USD`, `EUR` | Валюта платежа |
+| `processed_at` | ISO 8601, UTC, суффикс `Z` | Сохранённая дата обработки, не время попытки webhook |
+
+Все поля обязательны. Дата с другим часовым поясом нормализуется в UTC;
+дата без часового пояса и `null` отклоняются схемой. Payload формируется после commit
+и повторно используется при retry, поэтому сумма, статус и дата обработки не меняются
+между попытками отправки.
 
 | Параметр | Поведение |
 | --- | --- |
@@ -830,7 +846,8 @@ WHERE p.idempotency_key = 'demo-payment-001';
 
 ### Запуск pytest
 
-Набор содержит **29 сценариев**: 14 API, 2 транзакционных и 13 для обработки и публикации.
+Набор содержит **35 сценариев**: 14 API, 2 транзакционных, 14 для обработки и публикации
+и 5 для контракта webhook.
 Часть сценариев параметризована, поэтому количество функций меньше количества проверок.
 Для этих тестов реальные PostgreSQL, RabbitMQ и HTTP-получатель не нужны.
 
@@ -847,6 +864,7 @@ python -m pytest -v
 python -m pytest -v tests/test_payments_api.py
 python -m pytest -v tests/test_payment_transaction.py
 python -m pytest -v tests/test_payment_processing.py
+python -m pytest -v tests/test_payment_webhook.py
 python -m pytest -v tests/test_payment_processing.py::test_completed_payment_webhook_retry_and_rejection
 ```
 
@@ -890,6 +908,17 @@ docker compose run --rm --no-deps -v "$PWD/tests:/app/tests:ro" api python -m py
 | `test_pending_payment_is_saved_before_webhook` | Оба результата эмуляции | Статус сохранён, commit выполнен до webhook | 2 |
 | `test_completed_payment_webhook_retry_and_rejection` | Успех на попытках 1/2/3 и три ошибки 500 | До трёх отправок, задержки 1/2 секунды, затем reject без requeue | 4 |
 | `test_publication_requires_broker_ack` | Ack и Nack | Ack принимается, Nack вызывает ошибку; mandatory и timeout переданы | 2 |
+| `test_payment_processing_time_is_utc` | Запись даты обработки репозиторием | Дата содержит часовой пояс UTC | 1 |
+
+### Контракт webhook — `tests/test_payment_webhook.py`
+
+| Тест | Проверка | Ожидаемый результат | Сценариев |
+| --- | --- | --- | ---: |
+| `test_webhook_contract_serializes_decimal_and_normalizes_utc` | Оба конечных статуса, Decimal и дата с UTC+3 | Ровно пять полей, сумма строкой, дата нормализована в UTC | 2 |
+| `test_webhook_rejects_unfinished_payment_or_missing_timezone` | `pending`, дата `null` или без часового пояса | Ошибка валидации соответствующего поля | 3 |
+
+Тесты consumer также проверяют полный payload при первой отправке и retry.
+Интеграционный скрипт сравнивает все пять полей webhook с данными GET.
 
 ### Что именно покрывают тесты
 
@@ -949,7 +978,7 @@ python -m ruff format --check .
 │   ├── consumers/                 # FastStream app и единый обработчик платежа
 │   └── workers/                   # Outbox publisher и цикл его запуска
 ├── alembic/                       # Окружение и версии миграций
-├── tests/                         # 29 сценариев pytest
+├── tests/                         # 35 сценариев pytest
 ├── scripts/check_docker.py        # Получатель и проверки реального Docker-окружения
 ├── run.sh                        # Запуск сервисов и всех автоматизированных проверок
 ├── .env.example                   # Пример конфигурации без реальных секретов
@@ -980,7 +1009,7 @@ python -m ruff format --check .
 | DLQ | Настроен broker dead-lettering; отдельной гарантии сохранности при сбое брокера непосредственно во время переноса не проверяли |
 | Запуск без брокера | Compose ждёт healthcheck и перезапускает упавшие процессы; локальный publisher при ошибке самого первого подключения завершается |
 | Завершение publisher | Отдельный обработчик SIGTERM отсутствует; при остановке Docker наблюдался код 137 |
-| Время | Колонки имеют timezone, но `processed_at` устанавливается через naive `datetime.now()`; единая политика UTC ещё не приведена к одному виду |
+| Время | `processed_at` записывается через `datetime.now(UTC)`; webhook нормализует дату в UTC. Исторические записи не пересчитываются |
 | Служебные маршруты | API-ключ защищает POST/GET платежей; `/docs`, `/redoc`, `/openapi.json` открыты |
 | Валидация суммы | Нет отдельной проверки `amount > 0` и точности на уровне входной схемы |
 | Очистка и повторная отправка DLQ | Автоматическая очистка Outbox и инструмент повторного запуска DLQ не реализованы |

@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import aio_pika
@@ -115,6 +116,19 @@ class DockerCheck:
         require(response.status_code == 200, "Получатель недоступен")
         return response.json()
 
+    @staticmethod
+    def check_payload(payment: dict, items: list[dict]):
+        processed_at = datetime.fromisoformat(payment["processed_at"]).astimezone(UTC)
+        expected = {
+            "payment_id": payment["id"],
+            "status": payment["status"],
+            "amount": payment["amount"],
+            "currency": payment["currency"],
+            "processed_at": processed_at.isoformat().replace("+00:00", "Z"),
+        }
+        for item in items:
+            require(item["payload"] == expected, "Контракт webhook не совпадает с GET")
+
     async def wait_receipts(self, payment_id: str, count: int):
         async def probe():
             items = await self.receipts(payment_id)
@@ -180,10 +194,7 @@ class DockerCheck:
         saved = await self.get(payment_id)
         require(saved["status"] in {"succeeded", "failed"}, "Платёж не обработан")
         require(saved["processed_at"] is not None, "Дата обработки не сохранена")
-        require(
-            items[0]["payload"] == {"payment_id": payment_id, "status": saved["status"]},
-            "Результат webhook не совпадает с GET",
-        )
+        self.check_payload(saved, items)
         repeat = await self.create("success")
         require(repeat["payment_id"] == payment_id, "Повторный ключ создал другой платёж")
         require(repeat["created_at"] == payment["created_at"], "Изменилась дата создания")
@@ -203,6 +214,7 @@ class DockerCheck:
         for mode, count in (("retry2", 2), ("retry3", 3)):
             payment_id = (await self.create(mode, mode))["payment_id"]
             items = await self.wait_receipts(payment_id, count)
+            self.check_payload(await self.get(payment_id), items)
             self.check_intervals(items)
             await asyncio.sleep(3)
             require(len(await self.receipts(payment_id)) == count, "Лишний retry после успеха")
@@ -229,6 +241,7 @@ class DockerCheck:
                 if mode != "unreachable":
                     items = await self.receipts(payment_id)
                     require(len(items) == 3, "Ожидались три попытки")
+                    self.check_payload(after, items)
                     self.check_intervals(items)
                 passed(f"{mode}: DLQ с нужным UUID и reason=rejected, результат сохранён")
 
@@ -255,7 +268,7 @@ class DockerCheck:
         payment_id = str(payment_id)
         items = await self.wait_receipts(payment_id, 1)
         payment = await self.get(payment_id)
-        require(payment["status"] == items[0]["payload"]["status"], "Результаты не совпали")
+        self.check_payload(payment, items)
         await self.counts(payment_id, "recovery", published=True)
         passed("RabbitMQ восстановлен: автоматическая публикация и webhook без перезапуска workers")
 

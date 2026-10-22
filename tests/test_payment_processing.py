@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -12,6 +13,7 @@ from app.consumers import payment_consumer as consumer
 from app.db.models.payment import PaymentStatus
 from app.messaging.broker import payments_dlq, payments_queue
 from app.messaging.rabbitmq import RabbitMQ
+from app.repositories.payment_repository import PaymentRepository
 from app.schemas.payment import PaymentCreate
 from app.services.payment_service import PaymentService
 from app.workers import outbox_publisher
@@ -114,7 +116,13 @@ def consumer_dependencies(monkeypatch, payment):
     async def post(url, json):
         session.commit.assert_awaited_once()
         assert url == payment.webhook_url
-        assert json == {"payment_id": str(payment.id), "status": payment.status.value}
+        assert json == {
+            "payment_id": str(payment.id),
+            "status": payment.status.value,
+            "amount": "100.00",
+            "currency": "RUB",
+            "processed_at": "2026-10-12T09:33:11Z",
+        }
         return response
 
     client.post.side_effect = post
@@ -200,3 +208,16 @@ async def test_publication_requires_broker_ack(confirmed):
     publish.assert_awaited_once_with(
         message, routing_key="payments.new", mandatory=True, timeout=10
     )
+
+
+async def test_payment_processing_time_is_utc(payment):
+    session = AsyncMock()
+    repository = PaymentRepository(session)
+    before = datetime.now(UTC)
+
+    await repository.update_status(payment, PaymentStatus.SUCCEEDED)
+
+    assert payment.status == PaymentStatus.SUCCEEDED
+    assert payment.processed_at.tzinfo is UTC
+    assert before <= payment.processed_at <= datetime.now(UTC)
+    session.flush.assert_awaited_once()

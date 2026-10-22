@@ -10,6 +10,7 @@ from app.db.database import async_session_maker
 from app.db.models.payment import PaymentStatus
 from app.messaging.broker import broker, payments_queue
 from app.repositories.payment_repository import PaymentRepository
+from app.schemas.webhook import PaymentWebhookPayload
 
 
 @broker.subscriber(payments_queue)
@@ -39,15 +40,14 @@ async def process_payment(message: RabbitMessage) -> None:
 
         await session.commit()
 
+        payload = PaymentWebhookPayload.model_validate(payment).model_dump(mode="json")
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             for attempt in range(3):
                 try:
                     response = await client.post(
                         str(payment.webhook_url),
-                        json={
-                            "payment_id": str(payment.id),
-                            "status": payment.status.value,
-                        },
+                        json=payload,
                     )
                     response.raise_for_status()
                     break

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -41,7 +41,7 @@ class PaymentRepository:
         status: PaymentStatus,
     ) -> Payment:
         payment.status = status
-        payment.processed_at = datetime.now()
+        payment.processed_at = datetime.now(UTC)
 
         await self.session.flush()
 
