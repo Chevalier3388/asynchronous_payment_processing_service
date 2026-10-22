@@ -1,13 +1,8 @@
-import asyncio
 from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 from app.domain.payment import Payment
-from app.services.errors import (
-    PaymentNotFoundError,
-    WebhookDeliveryError,
-    WebhookDeliveryExhaustedError,
-)
+from app.services.errors import PaymentNotFoundError
 from app.services.ports import PaymentGateway, PaymentProcessingRepository, WebhookSender
 
 
@@ -51,13 +46,4 @@ class PaymentProcessingService:
         return payment
 
     async def _notify(self, payment: Payment) -> None:
-        for attempt in range(3):
-            try:
-                await self.webhook_sender.send(payment)
-                return
-            except WebhookDeliveryError as error:
-                if attempt == 2:
-                    raise WebhookDeliveryExhaustedError(
-                        f"Webhook delivery failed after 3 attempts for payment {payment.id}"
-                    ) from error
-                await asyncio.sleep(2**attempt)
+        await self.webhook_sender.send(payment)
