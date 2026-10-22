@@ -19,7 +19,7 @@ API принимает платёж и возвращает `202 Accepted`, а �
 | Обработка | Один FastStream consumer: эмуляция → сохранение → webhook; повторы через RabbitMQ |
 | Ошибки обработки | До трёх доставок сообщения с задержками 1 и 2 секунды; затем `payments.dlq` |
 | Запуск | Docker Compose или локальные Python-процессы с инфраструктурой в Docker |
-| Автотесты | 35 сценариев pytest без подключения к реальным БД, RabbitMQ и webhook |
+| Автотесты | 47 сценариев pytest без подключения к реальным БД, RabbitMQ и webhook |
 
 ## Содержание
 
@@ -56,7 +56,7 @@ API принимает платёж и возвращает `202 Accepted`, а �
 | Подготовка | Проверяет Docker и Compose; создаёт `.env` из примера, только если файла ещё нет |
 | 1. Сборка | Один раз собирает общий образ Python-сервисов |
 | 2. Запуск | Запускает PostgreSQL, RabbitMQ, миграции, API, consumer и publisher |
-| 3. Качество кода | Запускает Ruff и 35 автотестов в отдельном временном контейнере |
+| 3. Качество кода | Запускает Ruff и 47 автотестов в отдельном временном контейнере |
 | 4. Интеграция | Проверяет API-ключ, полный путь платежа, повторный ключ, 20 конкурентных POST, успех webhook на второй/третьей попытке, HTTP 500, тайм-аут, недоступный получатель и DLQ |
 | 5. Сбой брокера | Временно останавливает RabbitMQ, создаёт платёж и проверяет неопубликованную запись Outbox |
 | 6. Восстановление | Запускает RabbitMQ, ждёт автоматической публикации и webhook |
@@ -950,7 +950,7 @@ WHERE p.idempotency_key = 'demo-payment-001';
 
 ### Запуск pytest
 
-Набор содержит **35 сценариев**: 14 API, 2 транзакционных, 14 для обработки и публикации
+Набор содержит **47 сценариев**: 14 API, 2 транзакционных, 26 для обработки и публикации
 и 5 для контракта webhook.
 Часть сценариев параметризована, поэтому количество функций меньше количества проверок.
 Для этих тестов реальные PostgreSQL, RabbitMQ и HTTP-получатель не нужны.
@@ -998,10 +998,10 @@ docker compose run --rm --no-deps -v "$PWD/tests:/app/tests:ro" api python -m py
 
 | Тест | Проверка | Ожидаемый результат | Сценариев |
 | --- | --- | --- | ---: |
-| `test_create_response_requires_successful_commit` | Успешный и неуспешный commit после создания | 202 при успехе; 500 и rollback при ошибке commit | 2 |
+| `test_session_dependency_commits_or_rolls_back` | Нормальное завершение зависимости и ошибка commit | Commit при успехе; rollback при ошибке | 2 |
 
-Эта проверка защищает исправление гонки: ответ POST не должен уходить клиенту
-раньше фиксации платежа в БД. Зависимость сессии использует `scope="function"`.
+Сквозная проверка `run.sh` также делает GET сразу после POST и подтверждает,
+что платеж виден после ответа API.
 
 ### Обработка — `tests/test_payment_processing.py`
 
@@ -1009,10 +1009,16 @@ docker compose run --rm --no-deps -v "$PWD/tests:/app/tests:ro" api python -m py
 | --- | --- | --- | ---: |
 | `test_payment_creation_and_outbox` | Новый платёж, повторный ключ, конфликт вставки | Outbox создаётся только для нового платежа | 3 |
 | `test_outbox_is_marked_only_after_success` | Успех публикации и ошибка брокера | Persistent-сообщение; отметка только после успеха | 2 |
-| `test_pending_payment_is_saved_before_webhook` | Оба результата эмуляции | Статус сохранён, commit выполнен до webhook | 2 |
-| `test_completed_payment_webhook_retry_and_rejection` | Успех на попытках 1/2/3 и три ошибки 500 | До трёх отправок, задержки 1/2 секунды, затем reject без requeue | 4 |
+| `test_outbox_selection_uses_skip_locked` | SQL запроса publisher | Есть `FOR UPDATE SKIP LOCKED` |
+| `test_consumer_sends_transient_error_to_retry_queue` | Первая и вторая ошибки обработки | Persistent retry с очередью и счётчиком попыток |
+| `test_consumer_rejects_after_retry_limit` | Ошибка на третьей доставке | Reject без requeue, маршрутизация в DLQ |
+| `test_consumer_rejects_malformed_message` | Неверный JSON/UUID | Немедленный reject без запуска сервиса |
+| `test_consumer_sends_permanent_errors_to_dlq` | Нет платежа или постоянная ошибка webhook | Немедленный reject без retry |
+| `test_processing_service_persists_and_skips_delivered_webhook` | Сохранение отметки и повтор сообщения | Один webhook; после отметки отправка пропускается |
+| `test_webhook_sender_classifies_http_errors` | HTTP 2xx, 4xx, 408, 429 и 5xx | Ключ стабилен; постоянные и временные ошибки различаются |
+| `test_consumer_logs_without_logging_payload` | Логирование ошибки обработки | Контекст платежа есть, payload и текст ошибки отсутствуют |
 | `test_publication_requires_broker_ack` | Ack и Nack | Ack принимается, Nack вызывает ошибку; mandatory и timeout переданы | 2 |
-| `test_payment_processing_time_is_utc` | Запись даты обработки репозиторием | Дата содержит часовой пояс UTC | 1 |
+| `test_payment_processing_time_is_utc` | Завершение доменного платежа | Дата обработки содержит UTC | 1 |
 
 ### Контракт webhook — `tests/test_payment_webhook.py`
 
@@ -1036,7 +1042,9 @@ docker compose run --rm --no-deps -v "$PWD/tests:/app/tests:ro" api python -m py
 
 ### Проверки на работающем Docker-окружении
 
-Зафиксированный прогон от **13.10.2026** выполнен на существующей тестовой БД:
+Прогон от **22.10.2026** выполнен на существующей БД проекта. Внешний порт PostgreSQL
+установлен в `5433`, поскольку `5432` был занят другим контейнером. Миграция прошла,
+volume БД проекта сохранён:
 
 | Сценарий | Результат |
 | --- | --- |
@@ -1047,7 +1055,7 @@ docker compose run --rm --no-deps -v "$PWD/tests:/app/tests:ro" api python -m py
 | Тайм-аут и недоступный порт | Сообщения попали в DLQ, сохранённый результат платежа не изменился |
 | Остановка RabbitMQ | API принял платёж, Outbox остался неопубликованным |
 | Возврат RabbitMQ | Публикация и webhook восстановились без ручного перезапуска обработчиков |
-| Автотесты в Docker | `29 passed`, одно предупреждение совместимости TestClient/HTTPX |
+| Автотесты в Docker | `47 passed`; Ruff и форматирование прошли |
 | Ruff | Проверки кода и форматирования прошли |
 
 Ранее на реальной PostgreSQL также проверены 20 одновременных POST с одним ключом:
@@ -1084,7 +1092,7 @@ python -m ruff format --check .
 │   ├── consumers/                 # FastStream app, обработчик и сборка зависимостей
 │   └── workers/                   # Outbox publisher и цикл его запуска
 ├── alembic/                       # Окружение и версии миграций
-├── tests/                         # 35 сценариев pytest
+├── tests/                         # 47 сценариев pytest
 ├── scripts/check_docker.py        # Получатель и проверки реального Docker-окружения
 ├── run.sh                        # Запуск сервисов и всех автоматизированных проверок
 ├── .env.example                   # Пример конфигурации без реальных секретов

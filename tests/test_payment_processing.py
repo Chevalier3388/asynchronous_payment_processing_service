@@ -1,4 +1,5 @@
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -8,13 +9,25 @@ import pytest
 from aio_pika import DeliveryMode, Message
 from faststream.exceptions import RejectMessage
 from pamqp.commands import Basic
+from sqlalchemy.dialects import postgresql
 
 from app.consumers import payment_consumer as consumer
-from app.db.models.payment import PaymentStatus
-from app.messaging.broker import payments_dlq, payments_queue
+from app.domain.payment import Payment, PaymentCurrency, PaymentStatus
+from app.integrations.webhook_sender import HttpxWebhookSender
+from app.messaging.broker import (
+    payments_dlq,
+    payments_queue,
+    payments_retry_1s,
+    payments_retry_2s,
+)
 from app.messaging.rabbitmq import RabbitMQ
-from app.repositories.payment_repository import PaymentRepository
+from app.repositories.outbox_repository import OutboxRepository
 from app.schemas.payment import PaymentCreate
+from app.services.errors import (
+    PaymentNotFoundError,
+    PermanentWebhookDeliveryError,
+    WebhookDeliveryError,
+)
 from app.services.payment_service import PaymentService
 from app.workers import outbox_publisher
 
@@ -89,107 +102,111 @@ async def test_outbox_is_marked_only_after_success(monkeypatch, payment, publica
     rabbitmq.publish.assert_awaited_once()
 
 
-@pytest.fixture
-def consumer_dependencies(monkeypatch, payment):
+async def test_outbox_selection_uses_skip_locked():
     session = AsyncMock()
-    session.__aenter__.return_value = session
-    monkeypatch.setattr(consumer, "async_session_maker", lambda: session)
+    result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+    session.execute.return_value = result
 
-    async def update_status(target, status):
-        target.status = status
-        target.processed_at = target.created_at
+    await OutboxRepository(session).get_unpublished(limit=10)
 
-    repository = SimpleNamespace(
-        get_by_id_for_update=AsyncMock(return_value=payment),
-        update_status=AsyncMock(side_effect=update_status),
-    )
-    monkeypatch.setattr(consumer, "PaymentRepository", lambda session: repository)
-    sleep = AsyncMock()
-    monkeypatch.setattr(consumer.asyncio, "sleep", sleep)
-    monkeypatch.setattr(consumer.random, "uniform", lambda low, high: 3.0)
+    sql = str(session.execute.await_args.args[0].compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE SKIP LOCKED" in sql
 
-    client = AsyncMock()
-    client.__aenter__.return_value = client
-    # Build the response before replacing AsyncClient.
-    response = httpx.Response(200, request=httpx.Request("POST", payment.webhook_url))
 
-    async def post(url, json):
-        session.commit.assert_awaited_once()
-        assert url == payment.webhook_url
-        assert json == {
-            "payment_id": str(payment.id),
-            "status": payment.status.value,
-            "amount": "100.00",
-            "currency": "RUB",
-            "processed_at": "2026-10-12T09:33:11Z",
-        }
-        return response
-
-    client.post.side_effect = post
-    monkeypatch.setattr(consumer.httpx, "AsyncClient", lambda **kwargs: client)
-    message = SimpleNamespace(body=json.dumps({"payment_id": str(payment.id)}).encode())
+def _message(payment, retry_count=0, body=None):
     return SimpleNamespace(
-        session=session, repository=repository, sleep=sleep, client=client, message=message
+        body=body or json.dumps({"payment_id": str(payment.id)}).encode(),
+        headers={consumer.RETRY_HEADER: retry_count},
     )
+
+
+def _mock_processing_service(monkeypatch, service):
+    @asynccontextmanager
+    async def provide_service():
+        yield service
+
+    monkeypatch.setattr(consumer, "payment_processing_service", provide_service)
+
+
+async def test_consumer_processes_payment(monkeypatch, payment):
+    service = SimpleNamespace(process=AsyncMock(return_value=payment))
+    _mock_processing_service(monkeypatch, service)
+
+    await consumer.process_payment(_message(payment))
+
+    service.process.assert_awaited_once_with(payment.id)
 
 
 @pytest.mark.parametrize(
-    ("random_value", "expected_status"),
-    [(0.5, PaymentStatus.SUCCEEDED), (0.95, PaymentStatus.FAILED)],
+    ("retry_count", "retry_queue"), [(0, payments_retry_1s), (1, payments_retry_2s)]
 )
-async def test_pending_payment_is_saved_before_webhook(
-    monkeypatch, payment, consumer_dependencies, random_value, expected_status
+async def test_consumer_sends_transient_error_to_retry_queue(
+    monkeypatch, payment, retry_count, retry_queue
 ):
-    dependencies = consumer_dependencies
-    payment.status = PaymentStatus.PENDING
-    monkeypatch.setattr(consumer.random, "random", lambda: random_value)
+    service = SimpleNamespace(process=AsyncMock(side_effect=WebhookDeliveryError()))
+    _mock_processing_service(monkeypatch, service)
+    publish = AsyncMock(return_value=Basic.Ack())
+    monkeypatch.setattr(consumer.broker, "publish", publish)
+    message = _message(payment, retry_count)
 
-    await consumer.process_payment(dependencies.message)
+    await consumer.process_payment(message)
 
-    dependencies.repository.get_by_id_for_update.assert_awaited_once_with(str(payment.id))
-    dependencies.repository.update_status.assert_awaited_once_with(payment, expected_status)
-    assert payment.processed_at is not None
-    dependencies.sleep.assert_awaited_once_with(3.0)
-    dependencies.client.post.assert_awaited_once()
+    publish.assert_awaited_once_with(
+        message.body,
+        queue=retry_queue,
+        headers={consumer.RETRY_HEADER: retry_count + 1},
+        content_type="application/json",
+        persist=True,
+    )
 
 
-@pytest.mark.parametrize("failures", [0, 1, 2, 3])
-async def test_completed_payment_webhook_retry_and_rejection(
-    payment, consumer_dependencies, failures
-):
-    dependencies = consumer_dependencies
-    payment.status = PaymentStatus.SUCCEEDED
-    payment.processed_at = payment.created_at
-    original_processed_at = payment.processed_at
-    successful_post = dependencies.client.post.side_effect
-    attempts = 0
+async def test_consumer_requires_retry_publish_ack(monkeypatch, payment):
+    service = SimpleNamespace(process=AsyncMock(side_effect=WebhookDeliveryError()))
+    _mock_processing_service(monkeypatch, service)
+    monkeypatch.setattr(consumer.broker, "publish", AsyncMock(return_value=Basic.Nack()))
 
-    async def post(url, json):
-        nonlocal attempts
-        attempts += 1
-        response = await successful_post(url, json)
-        if attempts <= failures:
-            return httpx.Response(500, request=response.request)
-        return response
+    with pytest.raises(RuntimeError, match="did not confirm"):
+        await consumer.process_payment(_message(payment))
 
-    dependencies.client.post.side_effect = post
-    if failures == 3:
-        with pytest.raises(RejectMessage) as error:
-            await consumer.process_payment(dependencies.message)
-        assert error.value.extra_options == {"requeue": False}
-        assert payments_queue.arguments["x-dead-letter-exchange"] == ""
-        assert payments_queue.arguments["x-dead-letter-routing-key"] == payments_dlq.name
-        assert payments_dlq.durable is True
-    else:
-        await consumer.process_payment(dependencies.message)
 
-    assert attempts == min(failures + 1, 3)
-    assert [call.args[0] for call in dependencies.sleep.await_args_list] == [1, 2][
-        : min(failures, 2)
-    ]
-    dependencies.repository.update_status.assert_not_awaited()
-    assert payment.status == PaymentStatus.SUCCEEDED
-    assert payment.processed_at == original_processed_at
+async def test_consumer_rejects_after_retry_limit(monkeypatch, payment):
+    service = SimpleNamespace(process=AsyncMock(side_effect=WebhookDeliveryError()))
+    _mock_processing_service(monkeypatch, service)
+    publish = AsyncMock()
+    monkeypatch.setattr(consumer.broker, "publish", publish)
+
+    with pytest.raises(RejectMessage) as error:
+        await consumer.process_payment(_message(payment, consumer.MAX_RETRIES))
+
+    assert error.value.extra_options == {"requeue": False}
+    publish.assert_not_awaited()
+    assert payments_queue.arguments["x-dead-letter-routing-key"] == payments_dlq.name
+
+
+@pytest.mark.parametrize("body", [b"not-json", b"{}", b'{"payment_id":"bad-uuid"}'])
+async def test_consumer_rejects_malformed_message(monkeypatch, payment, body):
+    factory = AsyncMock()
+    monkeypatch.setattr(consumer, "payment_processing_service", factory)
+
+    with pytest.raises(RejectMessage) as error:
+        await consumer.process_payment(_message(payment, body=body))
+
+    assert error.value.extra_options == {"requeue": False}
+    factory.assert_not_awaited()
+
+
+@pytest.mark.parametrize("error_type", [PaymentNotFoundError, PermanentWebhookDeliveryError])
+async def test_consumer_sends_permanent_errors_to_dlq(monkeypatch, payment, error_type):
+    service = SimpleNamespace(process=AsyncMock(side_effect=error_type()))
+    _mock_processing_service(monkeypatch, service)
+    publish = AsyncMock()
+    monkeypatch.setattr(consumer.broker, "publish", publish)
+
+    with pytest.raises(RejectMessage) as error:
+        await consumer.process_payment(_message(payment))
+
+    assert error.value.extra_options == {"requeue": False}
+    publish.assert_not_awaited()
 
 
 @pytest.mark.parametrize("confirmed", [True, False])
@@ -211,13 +228,129 @@ async def test_publication_requires_broker_ack(confirmed):
 
 
 async def test_payment_processing_time_is_utc(payment):
-    session = AsyncMock()
-    repository = PaymentRepository(session)
+    domain_payment = Payment(
+        id=payment.id,
+        amount=payment.amount,
+        currency=PaymentCurrency.RUB,
+        description=payment.description,
+        metadata=payment.metadata,
+        idempotency_key=payment.idempotency_key,
+        webhook_url=payment.webhook_url,
+        created_at=payment.created_at,
+    )
     before = datetime.now(UTC)
 
-    await repository.update_status(payment, PaymentStatus.SUCCEEDED)
+    completed = domain_payment.complete(PaymentStatus.SUCCEEDED)
 
-    assert payment.status == PaymentStatus.SUCCEEDED
-    assert payment.processed_at.tzinfo is UTC
-    assert before <= payment.processed_at <= datetime.now(UTC)
-    session.flush.assert_awaited_once()
+    assert completed.status is PaymentStatus.SUCCEEDED
+    assert completed.processed_at.tzinfo is UTC
+    assert before <= completed.processed_at <= datetime.now(UTC)
+
+
+async def test_processing_service_persists_and_skips_delivered_webhook(payment):
+    from app.services.payment_processing_service import PaymentProcessingService
+
+    stored = Payment(
+        id=payment.id,
+        amount=payment.amount,
+        currency=PaymentCurrency.RUB,
+        description=payment.description,
+        metadata=payment.metadata,
+        idempotency_key=payment.idempotency_key,
+        webhook_url=payment.webhook_url,
+        created_at=payment.created_at,
+    )
+
+    class Repository:
+        async def get_by_id_for_update(self, payment_id):
+            return stored
+
+        async def save(self, updated):
+            nonlocal stored
+            stored = updated
+            return stored
+
+    commits = 0
+
+    async def commit():
+        nonlocal commits
+        commits += 1
+
+    gateway = SimpleNamespace(process=AsyncMock(return_value=PaymentStatus.SUCCEEDED))
+
+    async def send(completed):
+        assert commits == 1
+        assert completed.status is PaymentStatus.SUCCEEDED
+
+    sender = SimpleNamespace(send=AsyncMock(side_effect=send))
+    service = PaymentProcessingService(Repository(), gateway, sender, commit)
+
+    first = await service.process(stored.id)
+    second = await service.process(stored.id)
+
+    assert first.webhook_delivered_at is not None
+    assert second.webhook_delivered_at == first.webhook_delivered_at
+    assert commits == 4
+    gateway.process.assert_awaited_once()
+    sender.send.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_type"),
+    [
+        (200, None),
+        (400, PermanentWebhookDeliveryError),
+        (408, WebhookDeliveryError),
+        (429, WebhookDeliveryError),
+        (500, WebhookDeliveryError),
+    ],
+)
+async def test_webhook_sender_classifies_http_errors(payment, status_code, error_type):
+    from app.domain.payment import Payment as DomainPayment
+
+    domain_payment = DomainPayment(
+        id=payment.id,
+        amount=payment.amount,
+        currency=PaymentCurrency.RUB,
+        description=payment.description,
+        metadata=payment.metadata,
+        idempotency_key=payment.idempotency_key,
+        webhook_url=payment.webhook_url,
+        status=PaymentStatus.SUCCEEDED,
+        created_at=payment.created_at,
+        processed_at=payment.created_at,
+    )
+    response = httpx.Response(
+        status_code,
+        request=httpx.Request("POST", domain_payment.webhook_url),
+    )
+    client = AsyncMock()
+    client.post.return_value = response
+    sender = HttpxWebhookSender(client)
+
+    if error_type is None:
+        await sender.send(domain_payment)
+    else:
+        with pytest.raises(error_type):
+            await sender.send(domain_payment)
+
+    kwargs = client.post.await_args.kwargs
+    assert kwargs["headers"] == {"Idempotency-Key": domain_payment.webhook_idempotency_key}
+    assert kwargs["json"]["payment_id"] == str(domain_payment.id)
+
+
+async def test_consumer_logs_without_logging_payload(monkeypatch, payment, caplog):
+    from app.services.errors import PaymentNotFoundError
+
+    _mock_processing_service(
+        monkeypatch,
+        SimpleNamespace(process=AsyncMock(side_effect=PaymentNotFoundError("sensitive detail"))),
+    )
+    message = _message(payment, body=b'{"payment_id":"' + str(payment.id).encode() + b'"}')
+
+    with pytest.raises(RejectMessage):
+        await consumer.process_payment(message)
+
+    assert "payment_id=" in caplog.text
+    assert "sensitive detail" not in caplog.text
+    assert message.body.decode() not in caplog.text

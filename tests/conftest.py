@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 # Set test configuration before importing the application. No real services are used.
 for name, value in {
@@ -34,7 +34,7 @@ def payment():
         amount=Decimal("100.00"),
         currency="RUB",
         description="Тестовый платёж",
-        payment_metadata={"order_id": "order-003"},
+        metadata={"order_id": "order-003"},
         status="pending",
         idempotency_key="test-payment-003",
         webhook_url="https://example.com/webhook",
@@ -52,11 +52,18 @@ def payment_service(payment):
 
 
 @pytest.fixture
-def client(payment_service):
+async def client(payment_service):
     previous_overrides = app.dependency_overrides.copy()
-    app.dependency_overrides[get_payment_service] = lambda: payment_service
+
+    async def override_payment_service():
+        return payment_service
+
+    app.dependency_overrides[get_payment_service] = override_payment_service
     try:
-        with TestClient(app) as test_client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
