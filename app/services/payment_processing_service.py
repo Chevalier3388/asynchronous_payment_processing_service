@@ -35,7 +35,19 @@ class PaymentProcessingService:
 
         # Освобождаем блокировку и фиксируем результат до внешнего HTTP-запроса.
         await self.commit()
+
+        # Повторно читаем состояние: другой consumer мог уже доставить уведомление.
+        # Блокировка удерживается до фиксации доставки, сериализуя дубли сообщения.
+        payment = await self.repository.get_by_id_for_update(payment_id)
+        if payment is None:
+            raise PaymentNotFoundError(f"Payment {payment_id} not found")
+        if payment.webhook_delivered_at is not None:
+            await self.commit()
+            return payment
+
         await self._notify(payment)
+        payment = await self.repository.save(payment.mark_webhook_delivered())
+        await self.commit()
         return payment
 
     async def _notify(self, payment: Payment) -> None:

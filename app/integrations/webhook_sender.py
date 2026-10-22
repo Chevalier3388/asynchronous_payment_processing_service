@@ -12,7 +12,11 @@ class HttpxWebhookSender:
     async def send(self, payment: Payment) -> None:
         payload = PaymentWebhookPayload.model_validate(payment).model_dump(mode="json")
         try:
-            response = await self.client.post(payment.webhook_url, json=payload)
+            response = await self.client.post(
+                payment.webhook_url,
+                json=payload,
+                headers={"Idempotency-Key": payment.webhook_idempotency_key},
+            )
             response.raise_for_status()
         except httpx.HTTPError as error:
             raise WebhookDeliveryError(
